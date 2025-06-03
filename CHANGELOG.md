@@ -1,6 +1,6 @@
 # Changelog
 
-## Fork Changes (Akira-Papa/claude-code-action@beta)
+## Fork Changes (sugano28/claude-code-action@beta)
 
 This is a fork of the official Claude Code Action that adds OAuth authentication support for Claude Max subscribers.
 
@@ -28,7 +28,7 @@ This is a fork of the official Claude Code Action that adds OAuth authentication
    - `CLAUDE_EXPIRES_AT`
 3. Enable OAuth in your workflow:
    ```yaml
-   - uses: Akira-Papa/claude-code-action@beta
+   - uses: sugano28/claude-code-action@beta
      with:
        use_oauth: "true"
        claude_access_token: ${{ secrets.CLAUDE_ACCESS_TOKEN }}
