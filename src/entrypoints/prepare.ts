@@ -18,9 +18,43 @@ import { createPrompt } from "../create-prompt";
 import { createOctokit } from "../github/api/client";
 import { fetchGitHubData } from "../github/data/fetcher";
 import { parseGitHubContext } from "../github/context";
+import { validateOAuthTokens, getRemainingTokenTime } from "../oauth/token-validator";
+import { validateTokensWithRefreshGuidance, setupTokenRefreshAutomation } from "../oauth/token-auto-refresh";
 
 async function run() {
   try {
+    // Step 0: Check OAuth token validity if using OAuth
+    const useOAuth = process.env.USE_OAUTH === "true";
+    if (useOAuth) {
+      try {
+        const tokenInfo = validateOAuthTokens();
+        
+        // Use smart validation with refresh guidance
+        validateTokensWithRefreshGuidance(
+          tokenInfo.accessToken,
+          tokenInfo.refreshToken,
+          tokenInfo.expiresAt
+        );
+        
+        const remainingTime = getRemainingTokenTime(tokenInfo.expiresAt);
+        console.log(`✅ OAuth token validated. Remaining time: ${remainingTime}`);
+        
+        // Optionally setup automation if tokens are expiring soon
+        const hoursRemaining = (parseInt(tokenInfo.expiresAt) - Date.now()) / (1000 * 60 * 60);
+        if (hoursRemaining < 72) {
+          try {
+            await setupTokenRefreshAutomation();
+          } catch (e) {
+            // Non-critical, just log
+            core.info("Could not setup token refresh automation");
+          }
+        }
+      } catch (error) {
+        core.setFailed(`OAuth token validation failed: ${error}`);
+        process.exit(1);
+      }
+    }
+
     // Step 1: Setup GitHub token
     const githubToken = await setupGitHubToken();
     const octokit = createOctokit(githubToken);

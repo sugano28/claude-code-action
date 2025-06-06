@@ -53,6 +53,13 @@ This fork allows Claude Max subscribers to use their subscription in GitHub Acti
    - `CLAUDE_EXPIRES_AT`: The token expiration timestamp
 4. Use the OAuth configuration in your workflow (see examples below)
 
+**Note**: This action now includes:
+- **Automatic token expiration checking**: If your OAuth token is expired or will expire within 5 minutes, the action will fail with clear instructions
+- **Token refresh automation setup**: When tokens are expiring within 72 hours, the action can create:
+  - A GitHub workflow that checks token expiration daily and creates issues when renewal is needed
+  - A helper script (`./scripts/refresh-claude-tokens.sh`) to simplify the token refresh process
+- **Smart validation with guidance**: Provides specific instructions based on token status
+
 ## Usage
 
 Add a workflow file to your repository (e.g., `.github/workflows/claude.yml`):

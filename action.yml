@@ -106,6 +106,10 @@ runs:
         DIRECT_PROMPT: ${{ inputs.direct_prompt }}
         OVERRIDE_GITHUB_TOKEN: ${{ inputs.github_token }}
         GITHUB_RUN_ID: ${{ github.run_id }}
+        USE_OAUTH: ${{ inputs.use_oauth }}
+        INPUT_CLAUDE_ACCESS_TOKEN: ${{ inputs.claude_access_token }}
+        INPUT_CLAUDE_REFRESH_TOKEN: ${{ inputs.claude_refresh_token }}
+        INPUT_CLAUDE_EXPIRES_AT: ${{ inputs.claude_expires_at }}
 
     - name: Run Claude Code
       id: claude-code

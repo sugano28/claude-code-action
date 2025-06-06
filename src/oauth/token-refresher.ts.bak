@@ -1,0 +1,185 @@
+/**
+ * OAuth token refresh utilities
+ */
+
+import * as core from "@actions/core";
+import { isTokenExpired } from "./token-validator";
+
+interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type: string;
+}
+
+interface RefreshedTokenInfo {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
+}
+
+/**
+ * Refresh OAuth tokens using the refresh token
+ * @param refreshToken - The refresh token
+ * @returns New token information
+ */
+export async function refreshOAuthTokens(refreshToken: string): Promise<RefreshedTokenInfo> {
+  try {
+    core.info("Attempting to refresh OAuth tokens...");
+    
+    // Claude OAuth endpoint (based on standard OAuth2 flow)
+    const tokenEndpoint = "https://api.claude.ai/oauth/token";
+    
+    const response = await fetch(tokenEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Token refresh failed: ${response.status} ${errorText}`);
+    }
+
+    const data: TokenResponse = await response.json();
+    
+    // Calculate new expiration time
+    const expiresAt = Date.now() + (data.expires_in * 1000);
+    
+    core.info("Successfully refreshed OAuth tokens");
+    
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || refreshToken, // Some providers return new refresh token
+      expiresAt: expiresAt.toString(),
+    };
+  } catch (error) {
+    core.error(`Failed to refresh OAuth tokens: ${error}`);
+    throw error;
+  }
+}
+
+/**
+ * Attempt to refresh tokens if they are expired or expiring soon
+ * @param accessToken - Current access token
+ * @param refreshToken - Current refresh token
+ * @param expiresAt - Current expiration time
+ * @param bufferMinutes - Minutes before expiration to refresh (default: 5)
+ * @returns Updated token info or original if not refreshed
+ */
+export async function autoRefreshTokensIfNeeded(
+  accessToken: string,
+  refreshToken: string,
+  expiresAt: string,
+  bufferMinutes: number = 5
+): Promise<{ accessToken: string; refreshToken: string; expiresAt: string; wasRefreshed: boolean }> {
+  
+  if (!isTokenExpired(expiresAt, bufferMinutes)) {
+    core.info("OAuth tokens are still valid, no refresh needed");
+    return { accessToken, refreshToken, expiresAt, wasRefreshed: false };
+  }
+
+  try {
+    core.warning("OAuth tokens are expired or expiring soon, attempting automatic refresh...");
+    const refreshed = await refreshOAuthTokens(refreshToken);
+    
+    return {
+      ...refreshed,
+      wasRefreshed: true,
+    };
+  } catch (error) {
+    core.warning(`Automatic token refresh failed: ${error}`);
+    // Return original tokens if refresh fails
+    return { accessToken, refreshToken, expiresAt, wasRefreshed: false };
+  }
+}
+
+/**
+ * Update GitHub Secrets with new tokens (requires GitHub API permissions)
+ * Note: This requires the GITHUB_TOKEN to have admin permissions on the repository
+ */
+export async function updateGitHubSecrets(
+  owner: string,
+  repo: string,
+  tokens: RefreshedTokenInfo,
+  githubToken: string
+): Promise<void> {
+  try {
+    core.info("Attempting to update GitHub Secrets with new tokens...");
+    
+    // Get repository public key for secret encryption
+    const publicKeyResponse = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/actions/secrets/public-key`,
+      {
+        headers: {
+          Authorization: `token ${githubToken}`,
+          Accept: "application/vnd.github+json",
+        },
+      }
+    );
+
+    if (!publicKeyResponse.ok) {
+      throw new Error(`Failed to get repository public key: ${publicKeyResponse.status}`);
+    }
+
+    const { key, key_id } = await publicKeyResponse.json();
+    
+    // Import sodium for encryption (GitHub Actions environment includes libsodium)
+    const sodium = require("libsodium-wrappers");
+    await sodium.ready;
+    
+    // Helper function to encrypt secrets
+    const encryptSecret = (secret: string): string => {
+      const binkey = sodium.from_base64(key, sodium.base64_variants.ORIGINAL);
+      const binsec = sodium.from_string(secret);
+      const encBytes = sodium.crypto_box_seal(binsec, binkey);
+      return sodium.to_base64(encBytes, sodium.base64_variants.ORIGINAL);
+    };
+
+    // Update each secret
+    const secrets = [
+      { name: "CLAUDE_ACCESS_TOKEN", value: tokens.accessToken },
+      { name: "CLAUDE_REFRESH_TOKEN", value: tokens.refreshToken },
+      { name: "CLAUDE_EXPIRES_AT", value: tokens.expiresAt },
+    ];
+
+    for (const secret of secrets) {
+      const encryptedValue = encryptSecret(secret.value);
+      
+      const response = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/actions/secrets/${secret.name}`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `token ${githubToken}`,
+            Accept: "application/vnd.github+json",
+          },
+          body: JSON.stringify({
+            encrypted_value: encryptedValue,
+            key_id: key_id,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to update secret ${secret.name}: ${response.status}`);
+      }
+      
+      core.info(`Successfully updated ${secret.name}`);
+    }
+    
+    core.info("All GitHub Secrets updated successfully");
+  } catch (error) {
+    core.error(`Failed to update GitHub Secrets: ${error}`);
+    core.warning(
+      "Unable to automatically update GitHub Secrets. " +
+      "Please manually update CLAUDE_ACCESS_TOKEN, CLAUDE_REFRESH_TOKEN, and CLAUDE_EXPIRES_AT"
+    );
+    throw error;
+  }
+}
